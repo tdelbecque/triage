@@ -1,0 +1,19 @@
+// -*- mode: scala; -*-
+
+import scala.language.postfixOps
+
+implicit val session = spark
+
+val hadoopConf = sc.hadoopConfiguration
+
+hadoopConf.set ("fs.s3.awsAccessKeyId", sys env "ELSS3_ACCESS_KEY_ID")
+hadoopConf.set ("fs.s3.awsSecretAccessKey", sys env "ELSS3_SECRET_ACCESS_KEY")
+
+hadoopConf.set ("fs.s3.impl", "org.apache.hadoop.fs.s3native.NativeS3FileSystem")
+
+import com.sodad.els.triage.manuscripts._
+import com.sodad.els.triage.config._
+
+val man = new ManuscriptsApp (PlxStdEmbeddingConfig persist)
+val emb = new EmbeddingApp (PlxStdEmbeddingConfig)
+
