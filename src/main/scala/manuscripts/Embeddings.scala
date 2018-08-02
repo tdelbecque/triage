@@ -11,6 +11,7 @@ import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.{Vector, Vectors}
 import org.apache.spark.ml.classification.LogisticRegression
 import org.apache.spark.sql.types.StringType
+import com.sodad.els.triage.config._
 
 /** This trait is used to transform tokens during tokenization */
 trait Transformer extends java.io.Serializable {
@@ -95,87 +96,9 @@ package object replacement {
   
 }
 
-/** tells where all objects must retrieved and saved */
-trait PersistConfig {
-  /** manuscripts corpora */
-  def getPathManuscripts : String
-  /** manuscript abstracts tokenized */
-  def getPathAbstractsTokenized : String
-  /** manuscript titles tokenized */
-  def getPathTitlesTokenized : String
-  /** absolute frequencies of tokens (terms) in the manuscript corpora */
-  def getPathTokensTotalFrequencies : String
-  /** for each term, the number of documents that contains it */
-  def getPathTokensDocFrequencies : String
-  /** weight (for example idf) of each term in the corpora */
-  def getPathTokensIdfWeights : String
-  /** the manuscripts as bag of words, weighted */
-  def getPathTfidfWeights : String
-  /** embeddings of the words of the corpora */
-  def getPathWordEmbeddingOnAbstracts : String
-  /** embeddings of the papers of the corpora */
-  def getPathManuscriptsEmbedding : String
-  /** One Hot Encoding of areas, and manuscripts embeddings, 
-    * usefull for area classifcation purpose */
-  def getPathAreaOHE4Classification : String
-  /** map the area label to its position in the ohe vector */
-  def getPathAreaOHEIndex : String
-  /** Performances of a area classification models */
-  def getPathAreaOHEModelPerformances : String
-}
-
-trait EmbeddingConfig {
-  def persist : PersistConfig
-}
-
-object ElsStdPersistConfig extends PersistConfig {
-  val dataRepositoryPrefix = ManuscriptsApp.dataRepositoryPrefix
-  def getPathManuscripts = ManuscriptsApp.path_manuscripts
-  def getPathAbstractsTokenized = 
-    s"$dataRepositoryPrefix/thy/manuscripts-abstracts-tokenized"
-  def getPathTitlesTokenized = 
-    s"$dataRepositoryPrefix/thy/manuscripts-titles-tokenized"
-  def getPathTokensTotalFrequencies = 
-    s"$dataRepositoryPrefix/thy/manuscripts-tokens-total-frequencies"
-  def getPathTokensDocFrequencies = 
-    s"$dataRepositoryPrefix/thy/manuscripts-tokens-doc-frequencies"
-  def getPathTokensIdfWeights = 
-    s"$dataRepositoryPrefix/thy/manuscripts-tokens-idf-weights"
-  def getPathTfidfWeights = 
-    s"$dataRepositoryPrefix/thy/manuscripts-tfidf-weights"
-  def getPathWordEmbeddingOnAbstracts = 
-    s"$dataRepositoryPrefix/thy/wordEmbeddingOnAbstracts"
-  def getPathManuscriptsEmbedding = 
-    s"$dataRepositoryPrefix/thy/manuscriptsEmbedding"
-  def getPathAreaOHE4Classification = 
-    s"$dataRepositoryPrefix/thy/areaOHE4classifData"
-  def getPathAreaOHEIndex = s"$dataRepositoryPrefix/thy/areaOHEIndex"
-  def getPathAreaOHEModelPerformances = 
-    s"$dataRepositoryPrefix/thy/areaOHEModelPerformances"
-}
-
-object ElsStdEmbeddingConfig extends EmbeddingConfig {
-  def persist = ElsStdPersistConfig
-}
-
 /** Some constants and utility functions, related to manuscripts embedding, 
   * but that does not need a spark session */
 object EmbeddingApp {
-  val path_manuscripts = ElsStdPersistConfig getPathManuscripts
-  val dataRepositoryPrefix = ElsStdPersistConfig dataRepositoryPrefix
-
-  val path_abstractsTokenized = ElsStdPersistConfig getPathAbstractsTokenized
-  val path_titlesTokenized = ElsStdPersistConfig getPathTitlesTokenized
-  val path_tokensTotalFrequencies = ElsStdPersistConfig getPathTokensTotalFrequencies
-  val path_tokensDocFrequencies = ElsStdPersistConfig getPathTokensDocFrequencies
-  val path_tokensIdfWeights = ElsStdPersistConfig getPathTokensIdfWeights
-  val path_tfidfWeights = ElsStdPersistConfig getPathTfidfWeights
-  val path_wordEmbeddingOnAbstracts = ElsStdPersistConfig getPathWordEmbeddingOnAbstracts
-  val path_manuscriptsEmbedding = ElsStdPersistConfig getPathManuscriptsEmbedding
-  val path_areaOneHotEncodingForClassification = ElsStdPersistConfig getPathAreaOHE4Classification
-  val path_areaOneHotEncodingIndex = ElsStdPersistConfig getPathAreaOHEIndex
-  val path_areaOneHotEncodingModelPerformances = ElsStdPersistConfig getPathAreaOHEModelPerformances
-
   /** Apply tokenization to a sequence of texts.
     * @param texts  what to tokenize
     * @param maybeTransformer  the transformer to apply to each tokens, once the tokenization is done
@@ -206,7 +129,7 @@ object EmbeddingApp {
 /** All manuscripts embedding utilities, when a spark session is needed.
   * Per default, the manuscripts dataset is the one computed from [[ManuscriptsApp.doitExtractManuscriptsContent]]
   *  and is stored to [[ManuscriptsApp.path_manuscripts]] */ 
-class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
+class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSession) {
   type ManuscriptId = String
   type Term = String
 
@@ -221,7 +144,7 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
   val numberOfAreas = 27
 
   /** the whole set of ``complete`` manuscripts */
-  lazy val manuscripts = session.read.parquet(path_manuscripts)
+  lazy val manuscripts = session.read parquet pc.getPathManuscripts
   /** the manuscripts restricted to the titles */
   lazy val titles = manuscripts.select ("title").map (_.getString (0))
   /** the manuscripts restricted to the abstracts */
@@ -336,10 +259,10 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
     maybeIdfWeightSavePath: Option[String]
   ) = {
     val vocabularyFrequencyAbstracts = 
-      extractVocabularyFrequencyForTokenized (pr (path_abstractsTokenized).
+      extractVocabularyFrequencyForTokenized (pr (pc getPathAbstractsTokenized).
         map (_ getSeq[String](1)))
     val vocabularyFrequencyTitles = 
-      extractVocabularyFrequencyForTokenized (pr (path_titlesTokenized).
+      extractVocabularyFrequencyForTokenized (pr (pc getPathTitlesTokenized).
         map (_ getSeq[String](1)))
     val vocabularyFrequency = 
       vocabularyFrequencyAbstracts.
@@ -350,10 +273,10 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
         write.mode ("overwrite").option ("path", _) save }
     
     val vocabularyDocFrequencyAbstracts = 
-      extractVocabularyDocFrequencyForTokenized (pr (path_abstractsTokenized).
+      extractVocabularyDocFrequencyForTokenized (pr (pc getPathAbstractsTokenized).
         map (_ getSeq[String](1)))
     val vocabularyDocFrequencyTitles = 
-      extractVocabularyDocFrequencyForTokenized (pr (path_titlesTokenized).
+      extractVocabularyDocFrequencyForTokenized (pr (pc getPathTitlesTokenized).
         map (_ getSeq[String](1)))
     val vocabularyDocFrequency = 
       vocabularyDocFrequencyAbstracts.
@@ -363,7 +286,7 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
         write.mode ("overwrite").option ("path", _) save }
 
     maybeIdfWeightSavePath foreach {
-      val nDocs: Double = pr (path_abstractsTokenized) count
+      val nDocs: Double = pr (pc getPathAbstractsTokenized) count
       val idfWeigths = vocabularyDocFrequency.
         map { case (w, n) => (w, Math.log (nDocs / n)) }.
         toSeq
@@ -481,7 +404,7 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
     * @return a dataset of [[WeightedTermRecord]] */
   def createWeighted (
     data: Dataset[TokenizedRecord], 
-    termsWeightsPath: String = path_tokensIdfWeights, 
+    termsWeightsPath: String = pc getPathTokensIdfWeights, 
     maybeUnknownTermWeight: Option[Double] = None,
     maybeSavePath: Option[String] = None
   ) : Dataset[WeightedTermRecord] = 
@@ -526,6 +449,37 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
     
     manuscriptsEmbedding
   }
+
+  def computeTokensSeqWeightedBoW (
+    tokens: Seq[String], 
+    weightMap: Map[String, Double]
+  ) : Map[String, Double] = {
+    val tokenCount: Double = tokens size
+    val tokenFrequencies = 
+      tokens.foldLeft (tokens.map { (_, 0) }.toMap) { (a, t) => a + (t -> (a.getOrElse (t, 0) + 1)) }.toSeq
+    tokenFrequencies.map { case (w, f) =>
+      val tokenWeight: Double = weightMap.getOrElse (w, 0.0)
+      (w, tokenWeight * (f / tokenCount))
+    }.toMap
+  }
+
+  def computeTokensSeqWeightedBoW (
+    texts: Seq[String], 
+    weightData: Dataset[(String, Double)]
+  ) : Map[String, Double] =
+    computeTokensSeqWeightedBoW (texts, weightData.collect.toMap)
+
+  def computeTextWeightedBoW (
+    texts: Seq[String], 
+    weightData: Dataset[(String, Double)]
+  ) : Seq[Map[String, Double]] =
+    computeTextWeightedBoW (texts, weightData.collect.toMap)
+
+  def computeTextWeightedBoW (
+    texts: Seq[String], 
+    weightMap: Map[String, Double]
+  ) : Seq[Map[String, Double]] =
+    tokenizeTextPerSentence (texts) map { ts => computeTokensSeqWeightedBoW (ts, weightMap) }
 
   /** Compute the embedding of a sequence of terms as a weighted average of the embeddings of the terms */
   def computeTokensSeqEmbedding (
@@ -650,7 +604,7 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
     * @return a pair of the correct predictions and testing data set */ 
   def areaLRModel (
     areaIndex: Int, 
-    OHEPath: String = path_areaOneHotEncodingForClassification, 
+    OHEPath: String = pc getPathAreaOHE4Classification, 
     trainProportion: Double=0.8
   ): (Long, Long) =
     areaLRModel (areaIndex, pr (OHEPath).as[OHETrainingDataRecord], trainProportion)
@@ -693,7 +647,7 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
     * @param maybePerformancesSavePath
     * @return the performances as a dataset */
   def allAreaOHELRModel (
-    OHEPath: String = path_areaOneHotEncodingForClassification, 
+    OHEPath: String = pc getPathAreaOHE4Classification, 
     maybeAreaOHEIndexPath: Option[String] = None, 
     trainProportion: Double=0.8, 
     maybePerformancesSavePath: Option[String] = None
@@ -747,44 +701,55 @@ class EmbeddingApp (config: EmbeddingConfig) (implicit session: SparkSession) {
       manuscripts.
         select ("eid", "abstr").
         map {x => (x getString 0, x getString 1)},
-      None, Some (path_abstractsTokenized))
+      None, Some (pc getPathAbstractsTokenized))
 
     tokenizePerSentence (
       manuscripts.
         select ("eid", "title").
         map {x => (x getString 0, x getString 1)},
-      None, Some (path_titlesTokenized))
+      None, Some (pc getPathTitlesTokenized))
   }
   
   def doitExtractWordsEmbedding =
-    extractWordEmbedding (session.read.parquet (path_abstractsTokenized).as[TokenizedRecord], 
-      100, 
-      Some (path_wordEmbeddingOnAbstracts))
+    extractWordEmbedding (session.read.parquet (pc getPathAbstractsTokenized).as[TokenizedRecord], 
+      config.embedding.dimension, 
+      Some (pc getPathWordEmbeddingOnAbstracts))
 
   def doitExtractVocabulary =
-    extractVocabulary (Some (path_tokensTotalFrequencies), Some (path_tokensDocFrequencies), Some (path_tokensIdfWeights))
+    extractVocabulary (Some (pc getPathTokensTotalFrequencies), 
+      Some (pc getPathTokensDocFrequencies), Some (pc getPathTokensIdfWeights))
 
   def doitSaveTFIDFWeighted =
-    createWeighted (pr (path_abstractsTokenized).as[TokenizedRecord], maybeSavePath = Some (path_tfidfWeights))
+    createWeighted (pr (pc getPathAbstractsTokenized).as[TokenizedRecord], 
+      maybeSavePath = Some (pc getPathTfidfWeights))
  
   def doitExtractManuscriptsEmbedding = {
-    val tfidf_ds = pr (path_tfidfWeights).as[WeightedTermRecord]
-    val wordEmbedding_ds = pr (path_wordEmbeddingOnAbstracts).as[(String, Seq[Float])]
-    computeManuscriptsEmbeddings (tfidf_ds, wordEmbedding_ds, Some(path_manuscriptsEmbedding))
+    val tfidf_ds = pr (pc getPathTfidfWeights).as[WeightedTermRecord]
+    val wordEmbedding_ds = pr (pc getPathWordEmbeddingOnAbstracts).as[(String, Seq[Float])]
+    computeManuscriptsEmbeddings (tfidf_ds, wordEmbedding_ds, Some(pc getPathManuscriptsEmbedding))
   }
 
   def doitExtractAreaOHE4Classif =
     createOneHotAreaEncodingForClassification (
-      path_manuscriptsEmbedding, 
-      Some (path_areaOneHotEncodingForClassification), 
-      Some (path_areaOneHotEncodingIndex))
+      pc getPathManuscriptsEmbedding, 
+      Some (pc getPathAreaOHE4Classification), 
+      Some (pc getPathAreaOHEIndex))
   
   def doitAllAreaOHELRModels =
     allAreaOHELRModel (
-      path_areaOneHotEncodingForClassification, 
-      Some (path_areaOneHotEncodingIndex), 
+      pc getPathAreaOHE4Classification, 
+      Some (pc getPathAreaOHEIndex), 
       0.8, 
-      Some (path_areaOneHotEncodingModelPerformances))
+      Some (pc getPathAreaOHEModelPerformances))
+
+  def doit = {
+    doitSaveTokenizePerSentence
+    doitExtractVocabulary
+    doitExtractWordsEmbedding
+    doitSaveTFIDFWeighted
+    doitExtractManuscriptsEmbedding
+    doitExtractAreaOHE4Classif
+  }
 }
 
 /** Used to compute model predicting issns, restricted to some area */ 
@@ -792,7 +757,7 @@ class ISSNClassifyOneAgainstOthers (areas: Seq[String], app: EmbeddingApp) (impl
   import EmbeddingApp._
   import session.implicits._
 
-  val embedding = session.read.parquet (path_manuscriptsEmbedding)
+  val embedding = session.read.parquet (app.config.persist getPathManuscriptsEmbedding)
   val eids = app.flattenSubjAreas.
     where ($"area" isin (areas:_*)).
     join (app.manuscripts, "eid").

@@ -2,6 +2,7 @@ package com.sodad.els.triage.manuscripts
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.functions._
+import com.sodad.els.triage.config._
 
 case class AuthorRecord (
     authorSeq: Int,
@@ -34,19 +35,19 @@ object ManuscriptsApp {
   val path_initial = s"$dataRepositoryPrefix/data/scopus_manuscripts"
   val path_extra = s"$dataRepositoryPrefix/data/scopus_manuscripts_4_20180707"
   val path_authors = s"$dataRepositoryPrefix/thy/paperAuthors"
-  val path_manuscripts = s"$dataRepositoryPrefix/thy/manuscripts-content-valid-with-sources"
+//  val path_manuscripts = s"$dataRepositoryPrefix/thy/manuscripts-content-valid-with-sources"
 
   val initialFieldNames = Seq("datesort", "eid", "doi", "issn", "title", "abstr", 
     "au", "af", "au_af", "citations", "keywords", "terms", "asjc", "subjareas", 
     "source", "copyright_types")
 
   def mkS3path (path: String) = s"$dataRepositoryPrefix/$path"
-    
+
   def loadInitialData (path: String = path_initial) (implicit session: SparkSession) = {
     import session.implicits._
     session.read.parquet (path).toDF (initialFieldNames:_*)
   }
-
+  
   def loadExtraData (implicit session: SparkSession) = {
     import session.implicits._
     session.read.parquet (path_extra).toDF (initialFieldNames:_*)
@@ -94,7 +95,7 @@ object ManuscriptsApp {
 
 }
 
-class ManuscriptsApp (implicit session: SparkSession) {
+class ManuscriptsApp (val config: PersistConfig) (implicit session: SparkSession) {
   import session.implicits._
   import ManuscriptsApp._
 
@@ -112,7 +113,7 @@ class ManuscriptsApp (implicit session: SparkSession) {
     session.read.parquet (path_authors).as[PaperAuthorRecord]
 
   /** Extract ready to use content dataset */
-  def doitExtractManuscriptsContent (path: String = "s3://wads/epfl/thy/manuscripts-content-valid-with-sources") =
+  def doitExtractManuscriptsContent (path: String = config getPathManuscripts) =
     manuscriptsExtractContent (manuscripts, Some (path))
         
   /** Extract ready to use authors dataset */
