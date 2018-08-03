@@ -431,21 +431,19 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
         select ("embedding", "payload").
         as[(Seq[Float], (ManuscriptId, Double))].
         map { case (termEmbedding, (manuscriptId, termWeight)) =>
-          val weightedEmbedding = for (e <- termEmbedding) yield e*termWeight
-        (manuscriptId, (termWeight, for (e <- termEmbedding) yield e*termWeight))
-      }
+          (manuscriptId, (termWeight, for (e <- termEmbedding) yield e*termWeight)) }
 
     // Aggregate each term embeddings
     val tfidf_embedding_agg_ds = weightsEmbeddingJoinData.rdd.reduceByKey { (a, b) =>
       (a._1 + b._1, (a._2 zip b._2) map { x => x._1 + x._2 })
     }
-
     // Normalize
     val manuscriptsEmbedding = 
       tfidf_embedding_agg_ds.mapValues { case (n, xs) => xs.map { _ / n } }.
         toDF ("id", "embedding").as[EmbeddingRecord[Double]]
     
-    maybeSavePath foreach { manuscriptsEmbedding.write.mode("overwrite").option ("path", _) save }
+    maybeSavePath foreach { 
+      manuscriptsEmbedding.write.mode("overwrite").option ("path", _) save }
     
     manuscriptsEmbedding
   }
@@ -456,7 +454,8 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
   ) : Map[String, Double] = {
     val tokenCount: Double = tokens size
     val tokenFrequencies = 
-      tokens.foldLeft (tokens.map { (_, 0) }.toMap) { (a, t) => a + (t -> (a.getOrElse (t, 0) + 1)) }.toSeq
+      tokens.foldLeft (tokens.map { (_, 0) }.toMap) { (a, t) => 
+        a + (t -> (a.getOrElse (t, 0) + 1)) }.toSeq
     tokenFrequencies.map { case (w, f) =>
       val tokenWeight: Double = weightMap.getOrElse (w, 0.0)
       (w, tokenWeight * (f / tokenCount))
@@ -487,22 +486,17 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     wordEmbeddingData: Dataset[WordEmbeddingRecord], 
     weightMap: Map[String, Double]
   ) : Array[Double] = {
-    val tokenCount: Double = tokens size
-    val tokenFrequencies = 
-      tokens.foldLeft (tokens.map { (_, 0) }.toMap) { (a, t) => a + (t -> (a.getOrElse (t, 0) + 1)) }.toSeq
-    val tokenWeights = tokenFrequencies.map { case (w, f) =>
-      val tokenWeight: Double = weightMap.getOrElse (w, 0.0)
-      (w, tokenWeight * (f / tokenCount))
-    }
+    val tokenWeights = computeTokensSeqWeightedBoW (tokens, weightMap)
     val unnormalizedEmbedding =
       sc.parallelize (tokenWeights.toSeq).
         toDF ("word", "weight").
         join (wordEmbeddingData, "word").
+        select ("weight", "embedding").as[(Double, Array[Float])].
         collect.
-        map { r => (r getDouble 1, r getSeq[Float] 2) }.
-        foldLeft ((0.0, Array.empty[Float])) { (a, x) =>
+        map { case (w, emb) => (w, emb.map (_ * w)) }.
+        foldLeft ((0.0, Array.empty[Double])) { (a, x) =>
           (   a._1 + x._1,
-            if (a._2.isEmpty) x._2.toArray
+            if (a._2.isEmpty) x._2
             else a._2.zip (x._2).map {y => y._1 + y._2 }
           ) }
     unnormalizedEmbedding._2.map { _ / unnormalizedEmbedding._1 }
