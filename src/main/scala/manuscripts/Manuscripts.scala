@@ -23,6 +23,68 @@ case class AuthorRecord (
     surname_pn: String
 )
 
+case class AffiliationRecord (
+    affiliation_address_part: String,
+    affiliation_city: String,
+    affiliation_city_group: String,
+    affiliation_country: String,
+    affiliation_ids: Seq[String],
+    affiliation_organization: Seq[String],
+    affiliation_organization_count: Int,
+    affiliation_postal_code: String,
+    affiliation_state: String,
+    affiliation_tag_country: String,
+    affiliation_text: String,
+    afid: String,
+    dptid: String    
+)
+
+case class AuthorAffiliationRecord (Authorseq: Int, affiliation_seq: Int, validity_B: Boolean)
+    
+case class ManuscriptTermRecord (candidate: String, controlled: String, mainterm: String, `type`: String, weight: String)
+
+case class ManuscriptSourceRecord (
+    article_number: String, 
+    country: String, 
+    date_day: String, 
+    date_month: String, 
+    date_text: String, 
+    date_year: String, 
+    e_address: String, 
+    e_address_type: String, 
+    isbn_electronic: Seq[String], 
+    isbn_other: Seq[String], 
+    isbn_print: Seq[String], 
+    issn_electronic: Seq[String], 
+    issn_other: Seq[String], 
+    issn_print: Seq[String], 
+    publishername: String, 
+    sourcetitle: String, 
+    sourcetitle_abbrev: String, 
+    srcid: String, 
+    `type`: String, 
+    website: String
+)
+
+case class ManuscriptRecord (
+    datesort: String, 
+    eid: String, 
+    doi: String, 
+    issn: String, 
+    title: String, 
+    abstr: String, 
+    au: Seq[AuthorRecord], 
+    af: Seq[AffiliationRecord], 
+    au_af: Seq[AuthorAffiliationRecord], 
+    citations: Seq[String], 
+    keywords: Seq[String], 
+    terms: Seq[ManuscriptTermRecord], 
+    asjc: Seq[String], 
+    subjareas: Seq[String], 
+    source: ManuscriptSourceRecord, 
+    copyright_types: String
+)
+
 case class ManuscriptsContentRecord (eid: Long, issn: String, title: String, 
   abstr: String, subjareas: Seq[String],
    publishername: String, sourcetitle: String, sourcetitle_abbrev: String)
@@ -43,14 +105,16 @@ object ManuscriptsApp {
 
   def mkS3path (path: String) = s"$dataRepositoryPrefix/$path"
 
-  def loadInitialData (path: String = path_initial) (implicit session: SparkSession) = {
+  def loadInitialData (path: String = path_initial) (implicit session: SparkSession) 
+  : Dataset[ManuscriptRecord] = {
     import session.implicits._
-    session.read.parquet (path).toDF (initialFieldNames:_*)
+    session.read.parquet (path).toDF (initialFieldNames:_*).as[ManuscriptRecord]
   }
   
-  def loadExtraData (implicit session: SparkSession) = {
+  def loadExtraData (implicit session: SparkSession)
+  : Dataset[ManuscriptRecord] = {
     import session.implicits._
-    session.read.parquet (path_extra).toDF (initialFieldNames:_*)
+    session.read.parquet (path_extra).toDF (initialFieldNames:_*).as[ManuscriptRecord]
   }
 
   val manuscriptsContentFieldNames = Seq ("eid", "issn", "title", "abstr", "subjareas", 
@@ -64,7 +128,7 @@ object ManuscriptsApp {
     * 
     * @param data: the dataframe from where extraction is processed
     * @param maybeSavePath: if not `None`, where to save the extracted data. */
-  def manuscriptsExtractContent (data: DataFrame, maybeSavePath: Option[String] = None)
+  def manuscriptsExtractContent (data: Dataset[ManuscriptRecord], maybeSavePath: Option[String] = None)
     (implicit session: SparkSession) = {
     import session.implicits._
     import org.apache.spark.sql.catalyst.expressions.{GenericRowWithSchema => GR}
