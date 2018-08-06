@@ -9,7 +9,7 @@ import org.apache.spark.sql._
 import org.apache.spark.mllib.feature.{Word2Vec, Word2VecModel}
 import org.apache.spark.ml.feature.LabeledPoint
 import org.apache.spark.ml.linalg.{Vector, Vectors}
-import org.apache.spark.ml.classification.LogisticRegression
+import org.apache.spark.ml.classification.{LogisticRegression, LogisticRegressionModel}
 import org.apache.spark.sql.types.StringType
 import com.sodad.els.triage.config._
 
@@ -51,6 +51,42 @@ case class OHEClassificationModelPerformancesRecord (
   /** fitcount / totalCount */
   accuracy: Double
 )
+
+case class LRModelTransformRecord (
+    label: Double,
+    features: Vector,
+    rawPrediction: Vector,
+    probability: Vector,
+    prediction: Double
+)
+
+case class ModelEvaluationRecord (
+    numberOfCase: Long,
+    numberOfPositive: Long,
+    numberOfPredictedPositive: Long,
+    numberOfTruePositive: Long,
+    numberOfTrueNegative: Long
+) {
+  val numberOfNegative = numberOfCase - numberOfPositive
+  val numberOfPredictedNegative = numberOfCase - numberOfPredictedPositive
+  val numberOfFalsePositive = numberOfPredictedPositive - numberOfTruePositive
+  val numberOfFalseNegative = numberOfPredictedNegative - numberOfTrueNegative
+  lazy val accuracy = (numberOfTruePositive + numberOfTrueNegative).toDouble / numberOfCase
+  lazy val prevalence = numberOfPositive.toDouble / numberOfCase
+  lazy val positivePredictiveValue = numberOfTruePositive.toDouble / numberOfPositive
+  lazy val negativePredictiveValue = numberOfTrueNegative.toDouble / numberOfNegative
+
+  def +(m: ModelEvaluationRecord) = ModelEvaluationRecord (
+    numberOfCase = numberOfCase + m.numberOfCase,
+    numberOfPositive = numberOfPositive + m.numberOfPositive,
+    numberOfPredictedPositive = numberOfPredictedPositive + m.numberOfPredictedPositive,
+    numberOfTruePositive = numberOfTruePositive + m.numberOfTruePositive,
+    numberOfTrueNegative = numberOfTrueNegative + m.numberOfTrueNegative )
+}
+
+object ModelEvaluationRecord {
+    def empty = ModelEvaluationRecord (0, 0, 0, 0, 0)
+}
 
 /** Pattern replacement utilities */
 package object replacement {
@@ -685,6 +721,73 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       toDF ("id", "ohe")
     maybeSavePath foreach { ret.write.mode ("overwrite").option ("path", _) save }
     ret
+  }
+
+  def trainOHELRModel (
+    areaIndex: Int,
+    OHEData: Dataset[OHETrainingDataRecord],
+    trainProportion: Double
+  ) : (LogisticRegressionModel, Dataset[LabeledPoint], Dataset[LabeledPoint]) = {
+    val labeledPointsData =
+      OHEData.map { x =>
+        LabeledPoint (x.ohe(areaIndex), Vectors dense (x.features toArray)) }
+
+    val Array(training, testing) =
+      labeledPointsData.randomSplit (Array (trainProportion, 1.0 - trainProportion))
+    val lr = new LogisticRegression ()
+    val lrModel = lr.fit (training)
+    (lrModel, training, testing)
+  }
+    
+  def evaluateLRModel (
+    model: LogisticRegressionModel, 
+    evalDatasets: Dataset[LabeledPoint]*
+  ) : Seq[ModelEvaluationRecord] = {
+    for (d <- evalDatasets) yield {
+      val e = model.transform (d).as [LRModelTransformRecord]
+      e.rdd.aggregate (ModelEvaluationRecord empty) (
+        (mer: ModelEvaluationRecord, r: LRModelTransformRecord) => mer + ModelEvaluationRecord (
+                    numberOfCase = 1,
+                    numberOfPositive = if (r.label > 0.5) 1 else 0,
+                    numberOfPredictedPositive = if (r.prediction > 0.5) 1 else 0,
+                    numberOfTruePositive = if (r.label > 0.5 && r.prediction > 0.5) 1 else 0,
+                    numberOfTrueNegative = if (r.label < 0.5 && r.prediction < 0.5) 1 else 0 ) ,
+        (mer1: ModelEvaluationRecord, mer2: ModelEvaluationRecord) => mer1  + mer2
+      )
+    }
+  }
+    
+  def computeL2Square (
+    xs: Seq[Seq[Double]], 
+    embedding: Dataset[EmbeddingRecord[Double]]
+  ) : Dataset[(ManuscriptId, Seq[Double])] = {
+    val kernel = (x: Seq[Double], y: Seq[Double]) =>
+    (x zip y).
+      map { case (x, y) => x - y }.
+      foldLeft (0.0) { (a, x) => a + x*x }
+    embedding map { r => (r.id, xs map { kernel (_ , r embedding) }) }
+  }
+    
+  def mostSimilars (
+    xs: Seq[Seq[Double]], 
+    embedding: Dataset[EmbeddingRecord[Double]], 
+    n: Int
+  ) : Seq[Seq[(String, Double)]] = {
+    import scala.collection.immutable.TreeSet
+    implicit val o = new scala.math.Ordering[(String, Double)] {
+      def compare (a: (String, Double), b: (String, Double)) = 
+        if (a._2 < b._2) -1 else if (a._2 > b._2) 1 else 0
+    }
+
+    val sqDistDataset : Dataset[(String, Seq[Double])] = computeL2Square (xs, embedding)
+    sqDistDataset.rdd.aggregate (Seq.fill[TreeSet[(String, Double)]](xs size)(TreeSet.empty)) (
+      (tsets: Seq[TreeSet[(String, Double)]], sims: (ManuscriptId, Seq[Double])) => {
+        (tsets zip sims._2) map { case (ts, s) => (ts + ((sims._1, s))) slice (0, n) }
+      },
+      (tsets1: Seq[TreeSet[(String, Double)]], tsets2: Seq[TreeSet[(String, Double)]]) => {
+        (tsets1 zip tsets2) map { case (ts1, ts2) => (ts1 ++ ts2) slice (0, n) }
+      }
+    ) map { _ toSeq }
   }
 
   def doitSaveTokenizedAbstracts =
