@@ -71,9 +71,3 @@ object ElsStdEmbeddingConfig extends EmbeddingAppConfig {
   def persist = new PrefixPersistConfig ("s3://wads/epfl/thy")
 }
 
-object PlxStdEmbeddingConfig extends EmbeddingAppConfig {
-  def embedding = new EmbeddingConfig {
-    def dimension = 100
-  }
-  def persist = new PrefixPersistConfig ("phase6/std")
-}
