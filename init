@@ -13,7 +13,10 @@ hadoopConf.set ("fs.s3.impl", "org.apache.hadoop.fs.s3native.NativeS3FileSystem"
 
 import com.sodad.els.triage.manuscripts._
 import com.sodad.els.triage.config._
+import com.sodad.els.triage.authors._
+import com.sodad.els.triage.references._
 
 val man = new ManuscriptsApp (PlxStdEmbeddingConfig persist)
 val emb = new EmbeddingApp (PlxStdEmbeddingConfig)
-
+val aut = new AuthorsApp
+val ref = new ReferencesApp
