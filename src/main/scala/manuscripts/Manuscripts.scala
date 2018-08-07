@@ -216,6 +216,10 @@ class ManuscriptsApp (val config: PersistConfig) (implicit session: SparkSession
   lazy val paperAuthorsDataset : Dataset[PaperAuthorRecord] = 
     session.read.parquet (path_authors).as[PaperAuthorRecord]
 
+  def saveInitialManuscripts (path: String) =
+    manuscripts.write.mode ("overwrite").
+      option ("path", path) save
+
   /** Extract ready to use content dataset */
   def doitExtractManuscriptsContent (path: String = config getPathManuscripts) =
     manuscriptsExtractContent (manuscripts, Some (path))

@@ -22,4 +22,8 @@ class ReferencesApp (implicit session: SparkSession) {
     session.read.parquet (path_initial).
       toDF ("datesort", "issn", "eid", "reference").
       as[ReferenceRecord]
+
+  def saveInitialReferences (path: String) =
+    references.write.mode ("overwrite").
+      option ("path", path) save
 }

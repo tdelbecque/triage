@@ -25,4 +25,12 @@ class AuthorsApp (implicit session: SparkSession) {
   lazy val firstPublications =
     session.read.parquet (firstpub_path_initial).
       as[FirstPublicationRecord]
+
+  def saveInitialHIndexes (path: String) = 
+    hindexes.write.mode ("overwrite").
+      option ("path", path) save
+
+  def saveInitialFirstPublications (path: String) =
+    firstPublications.write.mode ("overwrite").
+      option ("path", path) save
 }
