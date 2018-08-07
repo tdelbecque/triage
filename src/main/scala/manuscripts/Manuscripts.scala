@@ -85,9 +85,9 @@ case class ManuscriptRecord (
     copyright_types: String
 )
 
-case class ManuscriptsContentRecord (eid: Long, issn: String, title: String, 
+case class ManuscriptsContentRecord (eid: String, issn: String, title: String, 
   abstr: String, subjareas: Seq[String],
-   publishername: String, sourcetitle: String, sourcetitle_abbrev: String)
+   publishername: String, sourcetitle: String, sourcetitle_abbrev: String, year: Short, month: Short)
 
 case class PaperAuthorsRecord (eid: String, issn: String, au: Seq[AuthorRecord])
 case class PaperAuthorRecord (eid: String, issn: String, auid: String)
@@ -117,6 +117,7 @@ object ManuscriptsApp {
     session.read.parquet (path_extra).toDF (initialFieldNames:_*).as[ManuscriptRecord]
   }
 
+  /** this is deprecated */
   val manuscriptsContentFieldNames = Seq ("eid", "issn", "title", "abstr", "subjareas", 
     "publishername", "sourcetitle", "sourcetitle_abbrev")
 
@@ -126,9 +127,11 @@ object ManuscriptsApp {
     * It keeps only those records for which `eid`, `issn`, `title`, `abstr`, `subjareas` 
     *  and `source` are not null.
     * 
+    * it should not be used any more as it does not extract date information.
+    * 
     * @param data: the dataframe from where extraction is processed
     * @param maybeSavePath: if not `None`, where to save the extracted data. */
-  def manuscriptsExtractContent (data: Dataset[ManuscriptRecord], maybeSavePath: Option[String] = None)
+  def manuscriptsExtractContentDeprecated (data: Dataset[ManuscriptRecord], maybeSavePath: Option[String] = None)
     (implicit session: SparkSession) = {
     import session.implicits._
     import org.apache.spark.sql.catalyst.expressions.{GenericRowWithSchema => GR}
@@ -156,6 +159,43 @@ object ManuscriptsApp {
     ret
   }
 
+  /** Extract these fields from the initial manuscripts dataset:
+    *   eid, issn, title, abstr, subjareas, publishername, sourcetitle, sourcetitle_abbrev, year, month
+    * 
+    * It keeps only those records for which `eid`, `issn`, `title`, `abstr`, `subjareas` 
+    *  and `source` are not null and datesort is well formed.
+    * 
+    * @param data: the dataframe from where extraction is processed
+    * @param maybeSavePath: if not `None`, where to save the extracted data. */
+  def manuscriptsExtractContent (data: Dataset[ManuscriptRecord], maybeSavePath: Option[String] = None)
+    (implicit session: SparkSession)
+      : Dataset[ManuscriptsContentRecord] = {
+    import session.implicits._
+    val datePattern = "^(201[5-9])(0[1-9]|1[012])(0[1-9]|[12][0-9]|3[01])$".r
+    val ret = 
+        data.
+        filter { x => 
+            x.eid != null && x.issn != null && x.title != null &&
+            x.abstr != null && x.subjareas != null && x.source != null &&
+            x.datesort != null && datePattern.findFirstIn (x.datesort).size == 1 }.
+        map { x =>
+            val datePattern (y, m, d) = x.datesort
+            ManuscriptsContentRecord (
+                eid = x.eid,
+                issn = x issn,
+                title = x title,
+                abstr = x abstr,
+                subjareas = x subjareas,
+                publishername = x.source publishername,
+                sourcetitle = x.source sourcetitle,
+                sourcetitle_abbrev = x.source sourcetitle_abbrev,
+                year = y toShort,
+                month = m toShort ) }.
+        dropDuplicates
+    maybeSavePath foreach { path =>
+      ret.write.mode ("overwrite").option ("path", path) save }
+    ret
+  }
 
 }
 
