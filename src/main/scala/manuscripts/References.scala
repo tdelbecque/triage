@@ -21,6 +21,7 @@ class ReferencesApp (implicit session: SparkSession) {
   lazy val references = 
     session.read.parquet (path_initial).
       toDF ("datesort", "issn", "eid", "reference").
+      dropDuplicates.
       as[ReferenceRecord]
 
   def saveInitialReferences (path: String) =

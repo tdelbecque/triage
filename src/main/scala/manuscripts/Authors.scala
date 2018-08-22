@@ -20,10 +20,12 @@ class AuthorsApp (implicit session: SparkSession) {
   lazy val hindexes = 
     session.read.parquet (hindex_path_initial).
       toDF ("auid", "hindex").
+      dropDuplicates.
       as[HIndexRecord]
 
   lazy val firstPublications =
     session.read.parquet (firstpub_path_initial).
+      dropDuplicates.
       as[FirstPublicationRecord]
 
   def saveInitialHIndexes (path: String) = 
