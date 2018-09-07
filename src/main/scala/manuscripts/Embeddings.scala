@@ -484,6 +484,47 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     manuscriptsEmbedding
   }
 
+  def computeManuscriptsEmbeddings (
+    data: Dataset[(String, String)],
+    wordEmbeddingData: Dataset[(String, Seq[Float])],
+    termWeights: Map[String, Double],
+    maybeUnknownTermWeight: Option[Double],
+    maybeTransformer: Option[Transformer],
+    maybeSavePath: Option[String]
+  ) : Dataset[EmbeddingRecord[Double]] = {
+    val tokenized : Dataset[TokenizedRecord] =
+      tokenizePerSentence (data, maybeTransformer, maybeSavePath = None)
+    val weightedBoW : Dataset[WeightedTermRecord] =
+      createWeighted (tokenized, termWeights, maybeUnknownTermWeight, maybeSavePath = None)
+    computeManuscriptsEmbeddings (weightedBoW, wordEmbeddingData.as[(String, Seq[Float])], maybeSavePath)
+  }
+
+  def computeManuscriptsEmbeddings (
+    data: Dataset[(String, String)],
+    wordEmbeddingData: Dataset[(String, Seq[Float])],
+    weightData: Dataset[(String, Double)],
+    maybeUnknownTermWeight: Option[Double],
+    maybeTransformer: Option[Transformer],
+    maybeSavePath: Option[String]
+  ) : Dataset[EmbeddingRecord[Double]] = {
+    val termWeights = weightData.collect.toMap[String, Double]
+    computeManuscriptsEmbeddings (data, wordEmbeddingData, termWeights, 
+      maybeUnknownTermWeight, maybeTransformer, maybeSavePath)
+  }
+
+  def computeManuscriptsEmbeddings (
+    data: Dataset[(String, String)],
+    wordEmbeddingData: Dataset[(String, Seq[Float])],
+    weightPath: String,
+    maybeUnknownTermWeight: Option[Double],
+    maybeTransformer: Option[Transformer],
+    maybeSavePath: Option[String]
+  ) : Dataset[EmbeddingRecord[Double]] = {
+    val termData = pr (weightPath).as[(String, Double)]
+    computeManuscriptsEmbeddings (data, wordEmbeddingData, termData,
+      maybeUnknownTermWeight, maybeTransformer, maybeSavePath)
+  }
+
   def computeTokensSeqWeightedBoW (
     tokens: Seq[String], 
     weightMap: Map[String, Double]
@@ -757,6 +798,10 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     }
   }
     
+  /** compute the L2 distances between a bunch of vectors and each elements in an embedding dataset.
+    * @param xs the vectors from which to compute the norm
+    * @param embedding
+    * @return a dataset of (elementid, [norms2]) pairs */ 
   def computeL2Square (
     xs: Seq[Seq[Double]], 
     embedding: Dataset[EmbeddingRecord[Double]]
@@ -768,6 +813,25 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     embedding map { r => (r.id, xs map { kernel (_ , r embedding) }) }
   }
     
+  def nSimilars (
+    xs: Seq[Seq[Double]],
+    embedding: Dataset[EmbeddingRecord[Double]], 
+    n: Int,
+    o: scala.math.Ordering[(String, Double)]
+  ) : Seq[Seq[(String, Double)]] = {
+    import scala.collection.immutable.TreeSet
+    val sqDistDataset : Dataset[(String, Seq[Double])] = computeL2Square (xs, embedding)
+    sqDistDataset.rdd.
+      aggregate (Seq.fill[TreeSet[(String, Double)]](xs size)(TreeSet.empty (o))) (
+        (tsets: Seq[TreeSet[(String, Double)]], sims: (ManuscriptId, Seq[Double])) => {
+          (tsets zip sims._2) map { case (ts, s) => (ts + ((sims._1, s))) slice (0, n) }
+        },
+        (tsets1: Seq[TreeSet[(String, Double)]], tsets2: Seq[TreeSet[(String, Double)]]) => {
+          (tsets1 zip tsets2) map { case (ts1, ts2) => (ts1 ++ ts2) slice (0, n) }
+        }
+      ) map { _ toSeq }
+  }
+
   def mostSimilars (
     xs: Seq[Seq[Double]], 
     embedding: Dataset[EmbeddingRecord[Double]], 
@@ -788,6 +852,102 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
         (tsets1 zip tsets2) map { case (ts1, ts2) => (ts1 ++ ts2) slice (0, n) }
       }
     ) map { _ toSeq }
+  }
+
+  /** Given a keyed dataset of coordinates, computes the centroids of each key
+    * @param data the keyed data sets
+    * @param dimension the size of the vectors
+    * @return a dataFrame a the centroids */
+  def computeCentroids (data: Dataset[(String, Seq[Double])], dimension: Int) : DataFrame = {
+    data.rdd.aggregateByKey ((0, Seq.fill[Double](dimension)(0.0))) (
+      (a, x) => (a._1 + 1, a._2.zip (x) map {
+        case (e1, e2) => e1 + e2
+      }),
+      (a1, a2) => (a1._1 + a2._1, a1._2.zip (a2._2) map {
+        case (e1, e2) => e1 + e2
+      })
+    ).mapValues { case (n, v) => v map ( _ / n) }.toDF ("id", "embedding")
+  }
+    
+  /** Compute the centroids embedding of the journals
+    * @param manuscripts a dataframe of manuscripts
+    * @param embeddings the manuscripts embeddings dataframe
+    * @param dimension  the dimension of the embedding
+    * @result a dataframe of the journals embeddings */
+  def computeJournalCentroidsFromManuscriptsEmbeddings (
+    manuscripts: DataFrame, 
+    embeddings: DataFrame, 
+    dimension: Int
+  ) : DataFrame = {
+    computeCentroids (
+      embeddings.
+        join (manuscripts select ("eid", "issn"), $"id" === $"eid").
+        select ("issn", "embedding").
+        as[(String, Seq[Double])],
+      dimension
+    )
+  }
+
+  def computeJournalCentroidsFromManuscriptsEmbeddingsPerYear (
+    manuscripts: DataFrame, 
+    embeddings: DataFrame, 
+    dimension: Int
+  ) : DataFrame = {
+    computeCentroids (
+      embeddings.
+        join (manuscripts select ("eid", "issn", "year"), $"id" === $"eid").
+        select ("issn", "year", "embedding").
+        as[(String, Short, Seq[Double])].
+        map { x => (s"${x._1}:${x._2}", x._3) },
+      dimension).
+      map { x =>
+        val Array (issn, year) = x.getString (0).split (":")
+        (issn, x getSeq[Double] 1, year toShort)
+      }.
+      toDF ("issn", "embedding", "year")
+  }
+
+  def computeJournalCentroidsFromManuscriptsEmbeddingsWithSubjareas (
+    manuscripts: DataFrame, 
+    embeddings: DataFrame, 
+    dimension: Int,
+    subjAreaMap: Map[String, Seq[String]]
+  ) : DataFrame = {
+    val centroids = 
+      computeJournalCentroidsFromManuscriptsEmbeddings (manuscripts, embeddings, dimension)
+
+    val bSubjAreaMap = sc.broadcast (subjAreaMap)
+    centroids.mapPartitions { it =>
+      val subjAreaMap = bSubjAreaMap.value
+      it map { x =>
+        val issn = x getString 0
+        val subjareas = subjAreaMap getOrElse (issn, Seq.empty[String])
+        (issn, x getSeq[Double] 1, subjareas)
+      }
+    }.
+      toDF ("id", "embedding", "subjareas")
+  }
+
+  def computeJournalCentroidsFromManuscriptsEmbeddingsPerYearWithSubjareas (
+    manuscripts: DataFrame, 
+    embeddings: DataFrame, 
+    dimension: Int,
+    subjAreaMap: Map[String, Seq[String]]
+  ) : DataFrame = {
+    val centroids = 
+      computeJournalCentroidsFromManuscriptsEmbeddingsPerYear (
+        manuscripts, embeddings, dimension)
+
+    val bSubjAreaMap = sc.broadcast (subjAreaMap)
+    centroids.mapPartitions { it =>
+      val subjAreaMap = bSubjAreaMap.value
+      it map { x =>
+        val issn = x getString 0
+        val subjareas = subjAreaMap getOrElse (issn, Seq.empty[String])
+        (issn, x getSeq[Double] 1, x getShort 2, subjareas)
+      }
+    }.
+      toDF ("id", "embedding", "year", "subjareas")
   }
 
   def doitSaveTokenizedAbstracts =
