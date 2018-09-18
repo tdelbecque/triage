@@ -34,10 +34,18 @@ case class WeightedTermRecord (
     id: String,
     weights: Map[String, Double])
 
+/** a word embedding associates a vector (here supported by a 
+  * sequence) to a term (the word) */
 case class WordEmbeddingRecord (word: String, embedding: Seq[Float])
 
+/** an embedding associates a vector (here supported by a sequence)
+  * to an entity identified by id.
+  * Currently all computed embeddings, with the exception of 
+  * word embeddings, are supported by a  EmbeddingRecord[Double] record */
 case class EmbeddingRecord[T] (id: String, embedding: Seq[T])
+case class EmbeddingRecordWithYear[T] (id: String, embedding: Seq[T], year: Int)
 
+/** Record to support One Hot Encoding dataset for training classifiers */
 case class OHETrainingDataRecord (id: String, ohe: Array[Int], features: Array[Double])
  
 /** Classification performance estimates for an "One Hot Encoded" target. */
@@ -52,6 +60,7 @@ case class OHEClassificationModelPerformancesRecord (
   accuracy: Double
 )
 
+/** Structure of a logistic regression modeling */
 case class LRModelTransformRecord (
     label: Double,
     features: Vector,
@@ -60,6 +69,8 @@ case class LRModelTransformRecord (
     prediction: Double
 )
 
+/** Structure to support estimation of performances of classification
+  * models */
 case class ModelEvaluationRecord (
     numberOfCase: Long,
     numberOfPositive: Long,
@@ -88,7 +99,9 @@ object ModelEvaluationRecord {
     def empty = ModelEvaluationRecord (0, 0, 0, 0, 0)
 }
 
-/** Pattern replacement utilities */
+/** Pattern replacement utilities 
+  * it replaces numerical expressions with tags 
+  * but should take care of other strings such as chemicals, genes, etc */
 package object replacement {
   /** Replace numerical expressions.
     * - +1.3 % => sodadpct
@@ -165,9 +178,10 @@ object EmbeddingApp {
 /** All manuscripts embedding utilities, when a spark session is needed.
   * Per default, the manuscripts dataset is the one computed from [[ManuscriptsApp.doitExtractManuscriptsContent]]
   *  and is stored to [[ManuscriptsApp.path_manuscripts]] */ 
-class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSession) {
+class EmbeddingApp (val config: EmbeddingAppConfig) (implicit val session: SparkSession) {
   type ManuscriptId = String
   type Term = String
+  type ManuscriptEmbeddingRecord = EmbeddingRecord[Double]
 
   import EmbeddingApp._
   import session.implicits._
@@ -179,12 +193,18 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
 
   val numberOfAreas = 27
 
-  /** the whole set of ``complete`` manuscripts */
-  lazy val manuscripts = session.read parquet pc.getPathManuscripts
+  /** the whole set of "complete" manuscripts */
+  lazy val manuscripts = 
+    session.read.parquet (pc.getPathManuscripts).as[ManuscriptsContentRecord]
   /** the manuscripts restricted to the titles */
   lazy val titles = manuscripts.select ("title").map (_.getString (0))
   /** the manuscripts restricted to the abstracts */
   lazy val abstracts = manuscripts.select ("abstr").map (_.getString (0))
+
+  lazy val manuscriptsEmbeddings = 
+    session.read.parquet (pc getPathManuscriptsEmbedding).
+      toDF ("id", "embedding").
+      as[ManuscriptEmbeddingRecord]
 
   /** A dataframe (fields = `eid`, `area`) holding the subject areas for each paper.
     * One area per record. Computation is performed on [[manuscripts]] */
@@ -484,6 +504,20 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     manuscriptsEmbedding
   }
 
+  /** Compute the embedding of manuscripts as the weighted average of the 
+    * embeddings of its terms. The manuscript dataset as a dataset of pairs. 
+    * the first member of the pair is the id, the second member is the 
+    * text content. The data is converted to weighted BoW before being 
+    * embedded.
+    * @param data the manuscript dataset
+    * @param wordEmbeddingData the word embeddings
+    * @param termWeights a map term => weight (typically the idf of the term)
+    * @param maybeUnknownTermWeight an optional term weight value to use when a
+    * term in the manuscript dataset does not have a weight in termWeights
+    * @param maybeTransformer an optional token transformer to use at tokenization 
+    * time 
+    * @param maybeSavePath where to write the new dataset
+    * @return the new dataset */
   def computeManuscriptsEmbeddings (
     data: Dataset[(String, String)],
     wordEmbeddingData: Dataset[(String, Seq[Float])],
@@ -495,10 +529,29 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     val tokenized : Dataset[TokenizedRecord] =
       tokenizePerSentence (data, maybeTransformer, maybeSavePath = None)
     val weightedBoW : Dataset[WeightedTermRecord] =
-      createWeighted (tokenized, termWeights, maybeUnknownTermWeight, maybeSavePath = None)
-    computeManuscriptsEmbeddings (weightedBoW, wordEmbeddingData.as[(String, Seq[Float])], maybeSavePath)
+      createWeighted (
+        tokenized, termWeights,
+        maybeUnknownTermWeight, maybeSavePath = None)
+    computeManuscriptsEmbeddings (
+      weightedBoW,
+      wordEmbeddingData.as[(String, Seq[Float])], maybeSavePath)
   }
 
+  /** Compute the embedding of manuscripts as the weighted average of the 
+    * embeddings of its terms. The manuscript dataset as a dataset of pairs. 
+    * the first member of the pair is the id, the second member is the 
+    * text content. The data is converted to weighted BoW before being 
+    * embedded.
+    * @param data the manuscript dataset
+    * @param wordEmbeddingData the word embeddings
+    * @param weightData a dataset of (term => weight) pairs 
+    * (typically the idf of the term)
+    * @param maybeUnknownTermWeight an optional term weight value to use when a
+    * term in the manuscript dataset does not have a weight in termWeights
+    * @param maybeTransformer an optional token transformer to use at tokenization 
+    * time 
+    * @param maybeSavePath where to write the new dataset
+    * @return the new dataset */
   def computeManuscriptsEmbeddings (
     data: Dataset[(String, String)],
     wordEmbeddingData: Dataset[(String, Seq[Float])],
@@ -512,6 +565,21 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       maybeUnknownTermWeight, maybeTransformer, maybeSavePath)
   }
 
+  /** Compute the embedding of manuscripts as the weighted average of the 
+    * embeddings of its terms. The manuscript dataset as a dataset of pairs. 
+    * the first member of the pair is the id, the second member is the 
+    * text content. The data is converted to weighted BoW before being 
+    * embedded.
+    * @param data the manuscript dataset
+    * @param wordEmbeddingData the word embeddings
+    * @param weightPath a path to a dataset of (term => weight) pairs 
+    * (typically the idf of the term)
+    * @param maybeUnknownTermWeight an optional term weight value to use when a
+    * term in the manuscript dataset does not have a weight in termWeights
+    * @param maybeTransformer an optional token transformer to use at tokenization 
+    * time 
+    * @param maybeSavePath where to write the new dataset
+    * @return the new dataset */
   def computeManuscriptsEmbeddings (
     data: Dataset[(String, String)],
     wordEmbeddingData: Dataset[(String, Seq[Float])],
@@ -525,6 +593,10 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       maybeUnknownTermWeight, maybeTransformer, maybeSavePath)
   }
 
+  /** Transforms a sequences of tokens to a weighted bag of words
+    * @param tokens the input tokens
+    * @param weightMap a map term => weight (typically the idf of the term)
+    * @return a map term => weight */
   def computeTokensSeqWeightedBoW (
     tokens: Seq[String], 
     weightMap: Map[String, Double]
@@ -539,25 +611,45 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     }.toMap
   }
 
+  /** Transforms a sequences of tokens to a weighted bag of words
+    * @param tokens the input tokens
+    * @param weightData a dataset of (term => weight) pairs 
+    * (typically the idf of the term)
+    * @return a map term => weight */
   def computeTokensSeqWeightedBoW (
     texts: Seq[String], 
     weightData: Dataset[(String, Double)]
   ) : Map[String, Double] =
     computeTokensSeqWeightedBoW (texts, weightData.collect.toMap)
 
+  /** Computes the weighted bags of words of a sequence of texts. 
+    * Each text in ths sequence gets its own BoW.
+    * @param texts the sequences of texts to transform
+    * @param weightData a dataset of (term => weight) pairs 
+    * @return a sequence of weighted BoW */
   def computeTextWeightedBoW (
     texts: Seq[String], 
     weightData: Dataset[(String, Double)]
   ) : Seq[Map[String, Double]] =
     computeTextWeightedBoW (texts, weightData.collect.toMap)
 
+  /** Computes the weighted bags of words of a sequence of texts. 
+    * Each text in ths sequence gets its own BoW.
+    * @param texts the sequences of texts to transform
+    * @param weightMap a map of (term => weight) pairs 
+    * @return a sequence of weighted BoW */
   def computeTextWeightedBoW (
     texts: Seq[String], 
     weightMap: Map[String, Double]
   ) : Seq[Map[String, Double]] =
     tokenizeTextPerSentence (texts) map { ts => computeTokensSeqWeightedBoW (ts, weightMap) }
 
-  /** Compute the embedding of a sequence of terms as a weighted average of the embeddings of the terms */
+  /** Compute the embedding of a sequence of terms as a 
+    * weighted average of the embeddings of the terms 
+    * @param tokens to token sequence to embed
+    * @param wordEmbeddingData a words embedding dataset
+    * @param weightMap a map of (term => weight) pairs
+    * @return the embedding vector as an array */
   def computeTokensSeqEmbedding (
     tokens: Seq[String], 
     wordEmbeddingData: Dataset[WordEmbeddingRecord], 
@@ -579,8 +671,10 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     unnormalizedEmbedding._2.map { _ / unnormalizedEmbedding._1 }
   }
 
-  /** computes the embedding of a sequence of texts as the weighted average of their terms. 
-    * Tokenization is the simpler one (no transformation nor pattern replacement 
+  /** computes the embedding of a sequence of texts 
+    * as the weighted average of their terms. 
+    * Tokenization is the simpler one 
+    * (no transformation nor pattern replacement 
     * @param texts
     * @param wordEmbeddingData
     * @param weightData
@@ -592,8 +686,10 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
   ) : Seq[Array[Double]] =
     computeTextEmbedding (texts, wordEmbeddingData, weightData.collect.toMap)
   
-  /** computes the embedding of a sequence of texts as the weighted average of their terms. 
-    * Tokenization is the simpler one (no transformation nor pattern replacement 
+  /** computes the embedding of a sequence of texts 
+    as the weighted average of their terms. 
+    * Tokenization is the simpler one 
+    (no transformation nor pattern replacement 
     * @param texts
     * @param wordEmbeddingData
     * @param weightMap
@@ -726,10 +822,15 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     allAreaOHELRModel (pr (OHEPath).as[OHETrainingDataRecord],
       maybeAreaOHEIndexPath, trainProportion, maybePerformancesSavePath)
 
-  /** For a given set of areas, creates an OHE dataset */
+  /** For a given set of subject areas, creates an OHE dataset 
+    * of issns for journals of these areas 
+    * @param areas the set of subject areas used as filter criteria
+    * @param maybeSavePath where to save the OHE dataset
+    * @return a dataframe of pairs (String, Array[Int]) 
+    * where the first component is an eid */
   def createISSN_OHEDataset (
     areas: Seq[String], 
-    maybeSavePath: Option[String] = None) = {
+    maybeSavePath: Option[String] = None) : DataFrame = {
     // ids of manuscripts for these areas
     val eids = 
       flattenSubjAreas.
@@ -764,6 +865,14 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     ret
   }
 
+  /** train a logistic regression model on an OHE dataset. 
+    * The classification is binary, one against others
+    * @param areaIndex which class to classify
+    * @param OHEdata training and testing data
+    * @param trainProportion proportion of training data
+    * @return a triple where the first component is the model, 
+    * the second component is the training data 
+    * and the third is the testing data */ 
   def trainOHELRModel (
     areaIndex: Int,
     OHEData: Dataset[OHETrainingDataRecord],
@@ -780,6 +889,11 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     (lrModel, training, testing)
   }
     
+  /** Evaluate a logistic regression model on a set of test datasets
+    * @param model the model
+    * @param evalDatasets the datasets on which to test
+    * @return a sequence of estimates of model performance
+    */
   def evaluateLRModel (
     model: LogisticRegressionModel, 
     evalDatasets: Dataset[LabeledPoint]*
@@ -813,6 +927,13 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     embedding map { r => (r.id, xs map { kernel (_ , r embedding) }) }
   }
     
+  /** Find the n most similar embeddings to input vectors.
+    * @param xs the set of vectors for which we have to find the n most similar
+    * @param embedding the embedding to search in
+    * @param n the number of elements to retrieve for each input vector
+    * @param o an ordering for ranking similarities
+    * @return a sequence of sequences s_i, one sequence for each input vector.
+    * each element of a subsequence is a pair (id, distance) */
   def nSimilars (
     xs: Seq[Seq[Double]],
     embedding: Dataset[EmbeddingRecord[Double]], 
@@ -832,6 +953,12 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       ) map { _ toSeq }
   }
 
+  /** Find the n most similar embeddings to input vectors.
+    * @param xs the set of vectors for which we have to find the n most similar
+    * @param embedding the embedding to search in
+    * @param n the number of elements to retrieve for each input vector
+    * @return a sequence of sequences s_i, one sequence for each input vector.
+    * each element of a subsequence is a pair (id, distance) */
   def mostSimilars (
     xs: Seq[Seq[Double]], 
     embedding: Dataset[EmbeddingRecord[Double]], 
@@ -873,27 +1000,39 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
     * @param manuscripts a dataframe of manuscripts
     * @param embeddings the manuscripts embeddings dataframe
     * @param dimension  the dimension of the embedding
-    * @result a dataframe of the journals embeddings */
+    * @return a dataframe of the journals embeddings */
   def computeJournalCentroidsFromManuscriptsEmbeddings (
     manuscripts: DataFrame, 
     embeddings: DataFrame, 
-    dimension: Int
+    dimension: Int,
+    maybeSavePath: Option[String]
   ) : DataFrame = {
-    computeCentroids (
+    val centroids = computeCentroids (
       embeddings.
         join (manuscripts select ("eid", "issn"), $"id" === $"eid").
         select ("issn", "embedding").
         as[(String, Seq[Double])],
       dimension
-    )
+    ).toDF ("id", "embedding")
+
+    maybeSavePath foreach { 
+      centroids.write.mode ("overwrite").option ("path", _ ) save
+    }
+    centroids
   }
 
+  /** Compute the centroids embedding of the journals, split per year
+    * @param manuscripts a dataframe of manuscripts
+    * @param embeddings the manuscripts embeddings dataframe
+    * @param dimension  the dimension of the embedding
+    * @return a dataframe of the journals embeddings */
   def computeJournalCentroidsFromManuscriptsEmbeddingsPerYear (
     manuscripts: DataFrame, 
     embeddings: DataFrame, 
-    dimension: Int
+    dimension: Int,
+    maybeSavePath: Option[String]
   ) : DataFrame = {
-    computeCentroids (
+    val centroids = computeCentroids (
       embeddings.
         join (manuscripts select ("eid", "issn", "year"), $"id" === $"eid").
         select ("issn", "year", "embedding").
@@ -904,20 +1043,34 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
         val Array (issn, year) = x.getString (0).split (":")
         (issn, x getSeq[Double] 1, year toShort)
       }.
-      toDF ("issn", "embedding", "year")
+      toDF ("id", "embedding", "year")
+    maybeSavePath foreach { 
+      centroids.write.mode ("overwrite").option ("path", _ ) save
+    }
+    centroids
   }
 
+  /** Similar to computeJournalCentroidsFromManuscriptsEmbeddings, 
+    * but add the subject areas in the last field of the returned dataset
+    * @param manuscripts a dataframe of manuscripts
+    * @param embeddings the manuscripts embeddings dataframe
+    * @param dimension  the dimension of the embedding
+    * @param subjAreaMap a map issn => subjectAreas
+    * @param maybeSavePath where to save
+    * @return a dataframe of the journals embeddings */
   def computeJournalCentroidsFromManuscriptsEmbeddingsWithSubjareas (
     manuscripts: DataFrame, 
     embeddings: DataFrame, 
     dimension: Int,
-    subjAreaMap: Map[String, Seq[String]]
+    subjAreaMap: Map[String, Seq[String]],
+    maybeSavePath: Option[String]
   ) : DataFrame = {
     val centroids = 
-      computeJournalCentroidsFromManuscriptsEmbeddings (manuscripts, embeddings, dimension)
+      computeJournalCentroidsFromManuscriptsEmbeddings (
+        manuscripts, embeddings, dimension, maybeSavePath)
 
     val bSubjAreaMap = sc.broadcast (subjAreaMap)
-    centroids.mapPartitions { it =>
+    val ret = centroids.mapPartitions { it =>
       val subjAreaMap = bSubjAreaMap.value
       it map { x =>
         val issn = x getString 0
@@ -926,20 +1079,33 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       }
     }.
       toDF ("id", "embedding", "subjareas")
+    maybeSavePath foreach {
+      ret.write.mode ("overwrite").option ("path", _) save
+    }
+    ret
   }
 
+  /** Similar to computeJournalCentroidsFromManuscriptsEmbeddingsPerYear, 
+    * but add the subject areas in the last field of the returned dataset
+    * @param manuscripts a dataframe of manuscripts
+    * @param embeddings the manuscripts embeddings dataframe
+    * @param dimension  the dimension of the embedding
+    * @param subjAreaMap a map issn => subjectAreas
+    * @param maybeSavePath where to save
+    * @return a dataframe of the journals embeddings */
   def computeJournalCentroidsFromManuscriptsEmbeddingsPerYearWithSubjareas (
     manuscripts: DataFrame, 
     embeddings: DataFrame, 
     dimension: Int,
-    subjAreaMap: Map[String, Seq[String]]
+    subjAreaMap: Map[String, Seq[String]],
+    maybeSavePath: Option[String]
   ) : DataFrame = {
     val centroids = 
       computeJournalCentroidsFromManuscriptsEmbeddingsPerYear (
-        manuscripts, embeddings, dimension)
+        manuscripts, embeddings, dimension, None)
 
     val bSubjAreaMap = sc.broadcast (subjAreaMap)
-    centroids.mapPartitions { it =>
+    val ret = centroids.mapPartitions { it =>
       val subjAreaMap = bSubjAreaMap.value
       it map { x =>
         val issn = x getString 0
@@ -948,11 +1114,20 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       }
     }.
       toDF ("id", "embedding", "year", "subjareas")
+    maybeSavePath foreach {
+      ret.write.mode ("overwrite").option ("path", _) save
+    }
+    ret
   }
 
+  /** Tokenizes abstracts of the manuscripts and save the results
+    * Should not be used (deprecated) 
+    * Use doitSaveTokenizePerSentence instead */
   def doitSaveTokenizedAbstracts =
-    saveTokenizedAbstracts (manuscripts, "s3://wads/epfl/thy/manuscripts-content-tokenized-abstracts")
+    saveTokenizedAbstracts (manuscripts.toDF, "s3://wads/epfl/thy/manuscripts-content-tokenized-abstracts")
 
+  /** Tokenizes abstract and title of manuscripts and save the results
+    * with respect to the configuration */
   def doitSaveTokenizePerSentence = {
     tokenizePerSentence (
       manuscripts.
@@ -967,31 +1142,54 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       None, Some (pc getPathTitlesTokenized))
   }
   
+  /** extracts words embedding and save it with respect to the configuration */
   def doitExtractWordsEmbedding =
     extractWordEmbedding (session.read.parquet (pc getPathAbstractsTokenized).as[TokenizedRecord], 
       config.embedding.dimension, 
       Some (pc getPathWordEmbeddingOnAbstracts))
 
+  /** extracts terms total frequencies, document frequencies and 
+    * inverse document frequencies and save them with respect to the configuration */
   def doitExtractVocabulary =
     extractVocabulary (Some (pc getPathTokensTotalFrequencies), 
       Some (pc getPathTokensDocFrequencies), Some (pc getPathTokensIdfWeights))
 
+  /** transforms manuscripts to a dataset of weighted BoW (from abstract only)
+    * and save the rsult with respect to the configuration */
   def doitSaveTFIDFWeighted =
     createWeighted (pr (pc getPathAbstractsTokenized).as[TokenizedRecord], 
       maybeSavePath = Some (pc getPathTfidfWeights))
  
+  /** computes manuscripts embedding from abstracts
+    * and save the result with respect to the configuration */
   def doitExtractManuscriptsEmbedding = {
     val tfidf_ds = pr (pc getPathTfidfWeights).as[WeightedTermRecord]
     val wordEmbedding_ds = pr (pc getPathWordEmbeddingOnAbstracts).as[(String, Seq[Float])]
     computeManuscriptsEmbeddings (tfidf_ds, wordEmbedding_ds, Some(pc getPathManuscriptsEmbedding))
   }
 
+  def doitExtractJournalsEmbedding = {
+    computeJournalCentroidsFromManuscriptsEmbeddings (
+      manuscripts.toDF,
+      manuscriptsEmbeddings.toDF,
+      config.embedding.dimension,
+      Some (pc getPathJournalsEmbedding))
+    computeJournalCentroidsFromManuscriptsEmbeddingsPerYear (
+      manuscripts.toDF,
+      manuscriptsEmbeddings.toDF,
+      config.embedding.dimension,
+      Some (pc getPathJournalsEmbeddingPerYear))
+  }
+
+  /** creates dataset suitable to train models that classify subject areas from
+    * manuscrpts ambedding and save the result with respect to the configuration */
   def doitExtractAreaOHE4Classif =
     createOneHotAreaEncodingForClassification (
       pc getPathManuscriptsEmbedding, 
       Some (pc getPathAreaOHE4Classification), 
       Some (pc getPathAreaOHEIndex))
   
+  /** Compute classification models for all subject area */
   def doitAllAreaOHELRModels =
     allAreaOHELRModel (
       pc getPathAreaOHE4Classification, 
@@ -999,12 +1197,15 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit session: SparkSess
       0.8, 
       Some (pc getPathAreaOHEModelPerformances))
 
+  /** A pipeline that create main standards artifacts: tokenised manuscripts, 
+    * term frequencies, BoW, word and manuscripts embeddings,... */
   def doit = {
     doitSaveTokenizePerSentence
     doitExtractVocabulary
     doitExtractWordsEmbedding
     doitSaveTFIDFWeighted
     doitExtractManuscriptsEmbedding
+    doitExtractJournalsEmbedding
     doitExtractAreaOHE4Classif
   }
 }
@@ -1053,6 +1254,8 @@ class ISSNClassifyOneAgainstOthers (areas: Seq[String], app: EmbeddingApp) (impl
       lrModel.transform (complement).filter {x => x.getDouble (0) == x.getDouble(4)}.count, complement count)
   }
 
+  /** compute frequencies of issns for some subject areas
+    * @param areas the subject area to filter on */
   def getIssnFreq (areas: Seq[String]) =
     app.manuscripts.
       select ("eid", "issn").
