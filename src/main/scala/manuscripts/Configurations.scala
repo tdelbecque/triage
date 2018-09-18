@@ -20,6 +20,10 @@ trait PersistConfig {
   def getPathWordEmbeddingOnAbstracts : String
   /** embeddings of the papers of the corpora */
   def getPathManuscriptsEmbedding : String
+  /** embeddings of the journals */
+  def getPathJournalsEmbedding : String
+  /** embeddings of the journals, split per year */
+  def getPathJournalsEmbeddingPerYear : String
   /** One Hot Encoding of areas, and manuscripts embeddings, 
     * usefull for area classifcation purpose */
   def getPathAreaOHE4Classification : String
@@ -27,6 +31,8 @@ trait PersistConfig {
   def getPathAreaOHEIndex : String
   /** Performances of a area classification models */
   def getPathAreaOHEModelPerformances : String
+  /** Reference distribution for trending dimension */
+  def getPathTrendingReference : String
 }
 
 trait EmbeddingConfig {
@@ -57,11 +63,17 @@ class PrefixPersistConfig (val prefix: String) extends PersistConfig {
     s"$prefix/wordEmbeddingOnAbstracts"
   def getPathManuscriptsEmbedding = 
     s"$prefix/manuscriptsEmbedding"
+  def getPathJournalsEmbedding =
+    s"$prefix/journalsEmbedding"
+  def getPathJournalsEmbeddingPerYear =
+    s"$prefix/journalsEmbeddingPerYear"
   def getPathAreaOHE4Classification = 
     s"$prefix/areaOHE4classifData"
   def getPathAreaOHEIndex = s"$prefix/areaOHEIndex"
   def getPathAreaOHEModelPerformances = 
     s"$prefix/areaOHEModelPerformances"
+  def getPathTrendingReference =
+    s"$prefix/trendingReference"
 }
 
 object ElsStdEmbeddingConfig extends EmbeddingAppConfig {
