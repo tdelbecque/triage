@@ -16,7 +16,7 @@ import com.sodad.els.triage.config._
 import com.sodad.els.triage.authors._
 import com.sodad.els.triage.references._
 
-val man = new ManuscriptsApp (PlxStdEmbeddingConfig persist)
+val man = new ManuscriptsApp (PlxStdEmbeddingConfig persist, "phase6/initialManuscripts")
 val emb = new EmbeddingApp (PlxStdEmbeddingConfig)
-val aut = new AuthorsApp
+val aut = new AuthorsApp (PlxStdEmbeddingConfig persist)
 val ref = new ReferencesApp
