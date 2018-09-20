@@ -3,7 +3,9 @@ import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions._
 import com.sodad.els.triage.config._
+import com.sodad.els.triage.utils._
 
+/*
 case class PercentileElement (value: Double, ptile: Double)
 
 class PTileNormalizer (repartition: Seq[PercentileElement]) extends (Double => Double) {
@@ -18,6 +20,7 @@ class PTileNormalizer (repartition: Seq[PercentileElement]) extends (Double => D
     p
   }
 }
+ */
 
 class TrendingApp (val embeddingApp : EmbeddingApp) {
   import embeddingApp._
@@ -133,5 +136,6 @@ class TrendingApp (val embeddingApp : EmbeddingApp) {
 
   def doitSaveTrendingRepartition = 
     computeTrendingRepartitions (Some (pc getPathTrendingReference))
+
 }
  
