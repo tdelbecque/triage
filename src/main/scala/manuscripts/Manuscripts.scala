@@ -95,7 +95,9 @@ case class PaperAuthorRecord (eid: String, issn: String, auid: String)
 object ManuscriptsApp {
   val dataRepositoryPrefix = "s3://wads/epfl"
   val path_initial = s"$dataRepositoryPrefix/data/scopus_manuscripts"
-  val path_extra = s"$dataRepositoryPrefix/data/scopus_manuscripts_4_20180707"
+  //val path_extra = s"$dataRepositoryPrefix/data/scopus_manuscripts_4_20180707"
+  val path_extra = 
+    s"$dataRepositoryPrefix/data/manuscripts/scopus_publications_evise_20180813_scopus_20180801_start_20150101_issn_09284931_00255408_10445803_02663538_13598368_01675273_07533322_07317085_01688227_09396411"
   val path_authors = s"$dataRepositoryPrefix/thy/paperAuthors"
 //  val path_manuscripts = s"$dataRepositoryPrefix/thy/manuscripts-content-valid-with-sources"
 
@@ -105,10 +107,17 @@ object ManuscriptsApp {
 
   def mkS3path (path: String) = s"$dataRepositoryPrefix/$path"
 
-  def loadInitialData (path: String = path_initial) (implicit session: SparkSession) 
+  def loadInitialData (path: String) (implicit session: SparkSession) 
   : Dataset[ManuscriptRecord] = {
     import session.implicits._
-    session.read.parquet (path).toDF (initialFieldNames:_*).as[ManuscriptRecord]
+    val df = session.read.parquet (path)
+    val df2 = 
+      if (df.columns.contains ("pmid"))
+        df.drop ("pmid")
+      else
+        df
+    
+    df2.toDF (initialFieldNames:_*).as[ManuscriptRecord]
   }
   
   def loadExtraData (implicit session: SparkSession)
@@ -199,12 +208,12 @@ object ManuscriptsApp {
 
 }
 
-class ManuscriptsApp (val config: PersistConfig) (implicit session: SparkSession) {
+class ManuscriptsApp (val config: PersistConfig, val initialPath: String) (implicit session: SparkSession) {
   import session.implicits._
   import ManuscriptsApp._
 
   /** Initial manuscripts dataframe */
-  lazy val manuscripts = loadInitialData ()
+  lazy val manuscripts = loadInitialData (initialPath)
 
   /** manuscripts data for these issn's: 
     *  - 0003-2670 (Analytica Chimica Acta)
