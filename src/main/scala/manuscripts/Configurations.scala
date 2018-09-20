@@ -33,6 +33,15 @@ trait PersistConfig {
   def getPathAreaOHEModelPerformances : String
   /** Reference distribution for trending dimension */
   def getPathTrendingReference : String
+
+  /* Authors */
+  def getPathAuthorsAmbiguity : String
+
+  /** h-indexes */
+  def getPathHIndex : String
+  def getPathHIndexRepartitionPerJournal : String
+
+  def getPathCoAuthorsWithManuscripts : String
 }
 
 trait EmbeddingConfig {
@@ -74,6 +83,19 @@ class PrefixPersistConfig (val prefix: String) extends PersistConfig {
     s"$prefix/areaOHEModelPerformances"
   def getPathTrendingReference =
     s"$prefix/trendingReference"
+
+  /* Authors */
+  def getPathAuthorsAmbiguity =
+    s"$prefix/authorsAmbiguity"
+
+  /** h-indexes */
+  def getPathHIndex =
+    s"$prefix/hindex"
+  def getPathHIndexRepartitionPerJournal =
+    s"$prefix/hindexRepartitionPerJournal"
+
+  def getPathCoAuthorsWithManuscripts =
+    s"$prefix/coAuthorsWithManuscripts"
 }
 
 object ElsStdEmbeddingConfig extends EmbeddingAppConfig {
