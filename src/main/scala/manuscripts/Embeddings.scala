@@ -701,6 +701,20 @@ class EmbeddingApp (val config: EmbeddingAppConfig) (implicit val session: Spark
   ) : Seq[Array[Double]] =
     tokenizeTextPerSentence (texts) map { ts => computeTokensSeqEmbedding (ts, wordEmbeddingData, weightMap) }
 
+  def computeTextEmbedding (texts: Seq[String]) : Seq[Array[Double]] = {
+    val wordEmbeddingData =
+      pr (pc.getPathWordEmbeddingOnAbstracts).
+        toDF ("word", "embedding").
+        as[WordEmbeddingRecord]
+    val weightData = 
+      pr (pc.getPathTokensIdfWeights).
+        as[(String, Double)]
+    computeTextEmbedding (
+      texts,
+      wordEmbeddingData,
+      weightData)
+  }
+
   /** creates a One Hot Encoding data to train classifier on areas.
     * @param manuscriptsEmbeddingPath 
     * @param maybeSavePath where to write OHE data
